@@ -1,73 +1,78 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"reflect"
-	"strings"
 
 	"github.com/vmihailenco/msgpack/v4"
 )
 
 const (
+	// overwrite size; default value is 64k
+	maxScanTokenSize = 4 * 1024 * 1024
+
 	subCommandToJson   = "tojson"
 	subCommandFromJson = "fromjson"
 )
 
-func fromJson(data []byte) ([]byte, error) {
-	lines := strings.Split(string(data), "\n")
+func fromJson(r io.Reader, w io.Writer) error {
+	s := bufio.NewScanner(r)
+	buf := make([]byte, bufio.MaxScanTokenSize)
+	s.Buffer(buf, maxScanTokenSize)
 
-	buf := bytes.NewBuffer(nil)
-	encoder := msgpack.NewEncoder(buf)
+	encoder := msgpack.NewEncoder(w)
 
-	for _, l := range lines {
+	for s.Scan() {
 		var v interface{}
-		err := json.Unmarshal([]byte(l), &v)
+		err := json.Unmarshal(s.Bytes(), &v)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		err = encoder.EncodeValue(reflect.ValueOf(v))
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	return buf.Bytes(), nil
+	return s.Err()
 }
 
-func toJson(data []byte) ([]byte, error) {
-	d := msgpack.NewDecoder(bytes.NewReader(data))
+func toJson(r io.Reader, w io.Writer) error {
+	d := msgpack.NewDecoder(r)
 
-	maps := make([]map[string]interface{}, 0)
 	for {
 		arr, err := d.DecodeInterface()
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			return nil, err
+			return err
 		}
 
 		m, ok := arr.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("invalid record in msgpack binary")
+			return fmt.Errorf("invalid record in msgpack binary")
 		}
 
-		maps = append(maps, m)
+		marshaled, err := json.Marshal(m)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(marshaled); err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			return err
+		}
 	}
 
-	encoded, err := json.Marshal(maps)
-	if err != nil {
-		return nil, err
-	}
-
-	return encoded, nil
+	return nil
 }
 
 func main() {
@@ -80,48 +85,41 @@ func main() {
 		subcommand = flag.Args()[0]
 	}
 
-	var inData []byte
+	var r io.Reader
 	if *in != "" {
-		d, err := ioutil.ReadFile(*in)
+		rr, err := os.Open(*in)
+		defer rr.Close()
 		if err != nil {
 			log.Fatal(err)
 		}
-		inData = d
+		r = rr
 	} else {
-		d, err := ioutil.ReadAll(os.Stdin)
-		if err != nil {
-			log.Fatal(err)
-		}
-		inData = d
+		r = os.Stdin
 	}
 
-	var outData []byte
+	var w io.WriteCloser
+	if *out != "" {
+		ww, err := os.Create(*out)
+		if err != nil {
+			log.Fatal(err)
+		}
+		w = ww
+	} else {
+		w = os.Stdout
+	}
+	defer w.Close()
+
 	switch subcommand {
 	case subCommandToJson:
-		d, err := toJson(inData)
-		if err != nil {
+		if err := toJson(r, w); err != nil {
 			log.Fatal(err)
 		}
-		outData = d
 	case subCommandFromJson:
-		d, err := fromJson(inData)
-		if err != nil {
+		if err := fromJson(r, w); err != nil {
 			log.Fatal(err)
 		}
-		outData = d
 	default:
 		log.Fatalf("call with subcommand, tojson or fromjson")
 	}
 
-	if *out != "" {
-		err := ioutil.WriteFile(*out, outData, 0644)
-		if err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		_, err := os.Stdout.Write(outData)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
 }
