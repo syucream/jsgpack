@@ -1,6 +1,6 @@
 # jsgpack
 
-The simplest CLI tool converts msgpack&lt;->JSON
+The simplest CLI tool converts Message Pack <-> JSON(Newline Delimited JSON)
 
 ## Installation
 
@@ -9,6 +9,17 @@ $ go get -u github.com/syucream/jsgpack
 ```
 
 ## Usage
+
+```
+$ ./jsgpack
+2020/08/04 00:17:08 call with subcommand, tojson or fromjson
+$ ./jsgpack -h
+Usage of ./jsgpack:
+  -in string
+        input file path
+  -out string
+        out file
+```
 
 ```
 # JSON -> MsgPack
